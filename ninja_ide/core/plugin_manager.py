@@ -118,6 +118,8 @@ PLUGIN_EXTENSION = '.plugin'
 class __PluginManager(object):
     '''
     Plugin manager allows to load, unload, initialize plugins.
+
+    Note: The name of each plugin HAVE TO BE UNIQUE!
     '''
 
     def __init__(self, plugins_dir, service_locator):
@@ -127,6 +129,8 @@ class __PluginManager(object):
         '''
         self._service_locator = service_locator
         #new!
+        # NINJA already takes care of just one directory where the plugins are
+        # but this allow it to add more directories with *minimal* changes
         self._plugins_by_dir = {}
         #add all the plugins paths
         for path in self.__create_list(plugins_dir):
@@ -299,50 +303,92 @@ class __PluginManager(object):
             sys.path = old_syspath
         return None
 
-    def load(self, plugin_name, dir_name):
+    def load(self, plugin_name, dir_name=None):
         global PLUGIN_EXTENSION
+
         if plugin_name in self._active_plugins:
+            logger.info("Plugin already initialized (%s)", plugin_name)
             return
-        for dir_name, plugin_list in list(self._plugins_by_dir.items()):
-            if plugin_name in plugin_list:
-                ext = PLUGIN_EXTENSION
-                plugin_filename = os.path.join(dir_name, plugin_name)
-                plugin_structure = json_manager.read_json(plugin_filename)
-                plugin_structure['name'] = plugin_name.replace(ext, '')
-                module = plugin_structure.get('module', None)
-                klassname = plugin_structure.get('class', None)
-                if module is not None and klassname is not None:
-                    try:
-                        plugin_instance = self._load_module(module,
-                            klassname, plugin_structure, dir_name)
-                        #set a get_plugin method to get the reference to other
-                        #setattr(plugin_instance,'get_plugin',self.__getitem__)
-                        #call a special method *initialize* in the plugin!
-                        plugin_instance.metadata = plugin_structure
-                        logger.info("Calling initialize (%s)", plugin_name)
-                        plugin_instance.initialize()
-                        #tuple (instance, metadata)
-                        plugin_metadata = (plugin_instance, plugin_structure)
-                        self._active_plugins[plugin_name] = plugin_metadata
-                    except (PluginManagerException, Exception) as reason:
-                        logger.error("Not instanciated (%s): %s", plugin_name,
-                            reason)
-                        #remove the plugin because has errors
-                        self._found_plugins.remove(plugin_name)
-                        traceback_msg = traceback.format_exc()
-                        plugin_name = plugin_name.replace(ext, '')
-                        #add the traceback to errors
-                        self._add_error(plugin_name, traceback_msg)
-                    else:
-                        logger.info("Successfuly initialized (%s)",
-                            plugin_name)
+
+        if dir_name is None:
+            # try to get the plugin's dir_name if it was not provided
+            dir_name = self._get_dir_from_plugin_name(plugin_name)
+            if not dir_name:
+                logger.warning("Plugin not recognized (%s)", plugin_name)
+                return
+
+        ext = PLUGIN_EXTENSION
+        plugin_filename = os.path.join(dir_name, plugin_name)
+        plugin_structure = json_manager.read_json(plugin_filename)
+        plugin_structure['name'] = plugin_name.replace(ext, '')
+        module = plugin_structure.get('module', None)
+        klassname = plugin_structure.get('class', None)
+        if module is not None and klassname is not None:
+            try:
+                plugin_instance = self._load_module(module,
+                    klassname, plugin_structure, dir_name)
+                #set a get_plugin method to get the reference to other
+                #setattr(plugin_instance,'get_plugin',self.__getitem__)
+                #call a special method *initialize* in the plugin!
+                plugin_instance.metadata = plugin_structure
+                logger.info("Calling initialize (%s)", plugin_name)
+                plugin_instance.initialize()
+                #tuple (instance, metadata)
+                plugin_metadata = (plugin_instance, plugin_structure)
+                self._active_plugins[plugin_name] = plugin_metadata
+            except (PluginManagerException, Exception) as reason:
+                logger.error("Not instanciated (%s): %s", plugin_name, reason)
+                #remove the plugin because has errors
+                self._found_plugins.remove(plugin_name)
+                traceback_msg = traceback.format_exc()
+                plugin_name = plugin_name.replace(ext, '')
+                #add the traceback to errors
+                self._add_error(plugin_name, traceback_msg)
+            else:
+                logger.info("Successfuly initialized (%s)", plugin_name)
+        else:
+            logger.warning("Module or Class not found (%s)", plugin_name)
+
+        #for dir_name, plugin_list in list(self._plugins_by_dir.items()):
+            #if plugin_name in plugin_list:
+                #ext = PLUGIN_EXTENSION
+                #plugin_filename = os.path.join(dir_name, plugin_name)
+                #plugin_structure = json_manager.read_json(plugin_filename)
+                #plugin_structure['name'] = plugin_name.replace(ext, '')
+                #module = plugin_structure.get('module', None)
+                #klassname = plugin_structure.get('class', None)
+                #if module is not None and klassname is not None:
+                    #try:
+                        #plugin_instance = self._load_module(module,
+                            #klassname, plugin_structure, dir_name)
+                        ##set a get_plugin method to get the reference to other
+                        ##setattr(plugin_instance,'get_plugin',self.__getitem__)
+                        ##call a special method *initialize* in the plugin!
+                        #plugin_instance.metadata = plugin_structure
+                        #logger.info("Calling initialize (%s)", plugin_name)
+                        #plugin_instance.initialize()
+                        ##tuple (instance, metadata)
+                        #plugin_metadata = (plugin_instance, plugin_structure)
+                        #self._active_plugins[plugin_name] = plugin_metadata
+                    #except (PluginManagerException, Exception) as reason:
+                        #logger.error("Not instanciated (%s): %s", plugin_name,
+                            #reason)
+                        ##remove the plugin because has errors
+                        #self._found_plugins.remove(plugin_name)
+                        #traceback_msg = traceback.format_exc()
+                        #plugin_name = plugin_name.replace(ext, '')
+                        ##add the traceback to errors
+                        #self._add_error(plugin_name, traceback_msg)
+                    #else:
+                        #logger.info("Successfuly initialized (%s)",
+                            #plugin_name)
 
     def load_all(self):
-        for dir, pl in list(self._plugins_by_dir.items()):
+        for dir_, pl in list(self._plugins_by_dir.items()):
             #Copy the list because may be we REMOVE item while iterate!
             found_plugins_aux = copy.copy(pl)
             for plugin_name in found_plugins_aux:
-                self.load(plugin_name, dir)
+                self.load(plugin_name, dir_)
 
     def load_all_external(self, plugin_path):
         #Copy the list because may be we REMOVE item while iterate!
